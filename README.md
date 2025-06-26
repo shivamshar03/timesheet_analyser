@@ -20,16 +20,14 @@ A powerful Streamlit-based dashboard that automates the generation of structured
 ---
 
 ## 📂 Folder Structure
-
+```
 project-timesheet-analysis/
 ├── app.py # Main Streamlit app
 ├── requirements.txt # Python dependencies
 ├── README.md # Project overview
 └── .env # API key configuration
 
-yaml
-Copy
-Edit
+```
 
 ---
 
@@ -53,7 +51,7 @@ Set up .env file:
 GROQ_API_KEY=your_groq_api_key_here
 
 ```
-Run the app:
+4. **Run the app:**
 ```bash
 streamlit run app.py
 ```
@@ -85,10 +83,10 @@ These are auto-generated based on CSV data embedded in the LLM response.
 - Plotly
 - Pandas
 
-##📄 License
+## 📄 License
 This project is licensed under the MIT License.
 
-##✨ Author
+## ✨ Author
 Shivam Sharma
 Founder, NexHub
 Python & AI Developer
