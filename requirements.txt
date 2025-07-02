@@ -5,5 +5,4 @@ langchain-groq
 pandas
 plotly
 sentence-transformers
-faiss-cpu
 faiss-gpu
