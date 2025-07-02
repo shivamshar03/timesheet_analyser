@@ -4,3 +4,4 @@ langchain
 langchain-groq
 pandas
 plotly
+sentence-transformers
