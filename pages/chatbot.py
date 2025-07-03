@@ -20,7 +20,7 @@ if "uploaded_file_bytes" not in st.session_state:
     st.stop()
 
 # Read text data
-timesheet_text = st.session_state["uploaded_file_bytes"].decode("utf-8")
+timesheet_text = st.session_state["uploaded_file_bytes"]
 
 # Save temporary file for FAISS indexing
 with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as tmp_file:
