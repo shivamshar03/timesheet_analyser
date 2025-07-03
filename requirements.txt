@@ -6,3 +6,4 @@ pandas
 plotly
 sentence-transformers
 faiss-cpu
+langchain-community
