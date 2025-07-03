@@ -56,6 +56,8 @@ Edit
 -- RAW TIMESHEET DATA START --
 {timesheet_data}
 -- RAW TIMESHEET DATA END --
+
+Note : Do not consider saturday and sunday and also chek the human errors .
 """
 )
 
