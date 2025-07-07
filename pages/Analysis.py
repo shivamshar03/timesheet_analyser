@@ -65,8 +65,8 @@ Note : Do not consider saturday and sunday and also chek the human errors .
 chain = LLMChain(llm=llm, prompt=prompt_template)
 
 # Streamlit UI
-st.set_page_config(page_title="Timesheet Dashboard - Upload & Analyze", layout="wide")
-st.title("📤 Upload Timesheet & Generate Report")
+st.set_page_config(page_title="Analyze Time Sheet", layout="wide")
+st.title("📤 Timesheet Report")
 
 if "uploaded_file_bytes" not in st.session_state:
     st.warning("Please upload a timesheet file from the Upload & Analyze page first.")
