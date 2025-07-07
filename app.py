@@ -1,7 +1,7 @@
 import streamlit as st
 
 # Set page configuration
-st.set_page_config(page_title="Timesheet Dashboard - Upload & Analyze", layout="wide")
+st.set_page_config(page_title="Timesheet Upload", layout="wide")
 st.title("📤 Upload Timesheet & Generate Report")
 
 # File uploader for .txt files
