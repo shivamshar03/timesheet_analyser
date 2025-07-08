@@ -6,15 +6,16 @@ from dotenv import load_dotenv
 from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ConversationBufferMemory
-from langchain_groq import ChatGroq
+from langchain.chains import LLMChain
+from langchain.prompts import PromptTemplate
 from langchain.schema import Document
+from langchain_groq import ChatGroq
 import pandas as pd
+import json
 
 # ------------------- Load Env -------------------
 load_dotenv()
-MONGO_URI = "mongodb+srv://naveencarinasoftlabs:root@cluster0.vxfp99z.mongodb.net"
+MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://naveencarinasoftlabs:root@cluster0.vxfp99z.mongodb.net")
 
 # ------------------- Streamlit UI -------------------
 st.set_page_config(page_title="HRMS Assistant", layout="wide")
@@ -28,15 +29,17 @@ collection = client["HRMS"]["users"]
 def load_documents():
     raw_docs = collection.find()
     documents = []
+
     for doc in raw_docs:
-        doc_str = (
-            f"Name: {doc.get('name', 'N/A')}\n"
-            f"Email: {doc.get('email', 'N/A')}\n"
-            f"Role: {doc.get('role', 'N/A')}\n"
-            f"Location: {doc.get('location', 'N/A')}\n"
-            f"Join Date: {doc.get('joined_date', 'N/A')}"
-        )
-        documents.append(doc_str)
+        try:
+            doc.pop("_id", None)  # Remove MongoDB internal ID
+            doc_str = "\n".join([
+                f"{key}: {json.dumps(value, indent=2) if isinstance(value, (dict, list)) else value}"
+                for key, value in doc.items()
+            ])
+            documents.append(doc_str)
+        except Exception as e:
+            st.warning(f"❌ Skipping document due to error: {e}")
     return documents
 
 # ------------------- Build or Load FAISS -------------------
@@ -44,8 +47,9 @@ def build_vectorstore(docs):
     index_path = "faiss_index"
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     docs = [Document(page_content=doc) for doc in docs]
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
     chunks = splitter.split_documents(docs)
+    st.info(f"🧩 Total chunks created: {len(chunks)}")
     vectorstore = FAISS.from_documents(chunks, embeddings)
     vectorstore.save_local(index_path)
     return vectorstore
@@ -60,40 +64,62 @@ def get_vectorstore(force_rebuild=False):
     if os.path.exists(index_path):
         try:
             return FAISS.load_local(index_path, embeddings, allow_dangerous_deserialization=True)
-        except:
-            st.warning("⚠️ Failed to load index. Rebuilding...")
+        except Exception as e:
+            st.warning(f"⚠️ Failed to load index: {e}. Rebuilding...")
 
     docs = load_documents()
+    if not docs:
+        st.error("❌ No documents found to index.")
+        return None
     return build_vectorstore(docs)
 
-# ------------------- Conversation Chain -------------------
-def get_conversational_chain():
-    vectorstore = get_vectorstore()
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 100})
-    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+# ------------------- Build LLM Chain -------------------
+def get_llm_chain():
     llm = ChatGroq(model_name="llama3-8b-8192", temperature=0)
-    return ConversationalRetrievalChain.from_llm(llm, retriever, memory=memory)
+    prompt_template = PromptTemplate(
+        input_variables=["context", "question"],
+        template="""
+You are an assistant for the HRMS database. Use the following context to answer the user's question.
+If the answer is not found in the context, reply "I couldn't find that information."
+
+Context:
+{context}
+
+Question: {question}
+"""
+    )
+    return LLMChain(llm=llm, prompt=prompt_template)
 
 # ------------------- 💬 Chat Tab -------------------
 with tabs[0]:
-    st.header("💬 Chat with HRMS (Memory + Pagination)")
+    st.header("💬 Chat with HRMS ")
+
+    if "vectorstore" not in st.session_state:
+        with st.spinner("🔍 Loading vector store..."):
+            st.session_state.vectorstore = get_vectorstore()
 
     if "chat_chain" not in st.session_state:
-        st.session_state.chat_chain = get_conversational_chain()
-        st.session_state.chat_history = []
-        st.session_state.chat_pages = []
+        st.session_state.chat_chain = get_llm_chain()
 
-    query = st.chat_input("Ask a question about HRMS.users")
+    query = st.chat_input("Ask something about employees...")
 
     if query:
-        with st.spinner("Thinking..."):
-            response = st.session_state.chat_chain.run(query)
+        with st.spinner("🤖 Thinking..."):
+            docs = st.session_state.vectorstore.similarity_search(query, k=15)
+            context = "\n\n".join([doc.page_content for doc in docs])
+            response = st.session_state.chat_chain.run({
+                "context": context,
+                "question": query
+            })
+            st.markdown("**🧠 Answer:**")
             st.write(response)
+
+            with st.expander("📄 Retrieved context"):
+                st.write(context)
 
 # ------------------- 📄 View All Users Tab -------------------
 with tabs[1]:
     st.header("📄 All Users in HRMS.users")
-
     data = list(collection.find())
     if data:
         df = pd.DataFrame(data)
@@ -116,5 +142,5 @@ with tabs[1]:
 with tabs[2]:
     st.header("🛠️ Rebuild FAISS Vector Index")
     if st.button("🔄 Clear & Rebuild Index"):
-        get_vectorstore(force_rebuild=True)
+        st.session_state.vectorstore = get_vectorstore(force_rebuild=True)
         st.success("✅ Rebuilt vector DB using all documents.")
