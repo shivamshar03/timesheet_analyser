@@ -11,40 +11,57 @@ from langchain.prompts import PromptTemplate
 from langchain.schema import Document
 from langchain_groq import ChatGroq
 import pandas as pd
-import json
+from bson import ObjectId
 
 # ------------------- Load Env -------------------
 load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://naveencarinasoftlabs:root@cluster0.vxfp99z.mongodb.net")
 
-# ------------------- Streamlit UI -------------------
-st.set_page_config(page_title="HRMS Assistant", layout="wide")
-tabs = st.tabs(["💬 Chat", "📄 View All Users", "🛠️ Rebuild Index"])
-
 # ------------------- MongoDB -------------------
 client = MongoClient(MONGO_URI)
-collection = client["HRMS"]["users"]
+db = client["HRMS"]
+all_collections = [col for col in db.list_collection_names() if not col.startswith("system.")]
 
-# ------------------- Format MongoDB Docs -------------------
+# ------------------- Streamlit UI -------------------
+st.set_page_config(page_title="HRMS Assistant", layout="wide")
+st.sidebar.title("🗂️ Collection Settings")
+selected_collection_name = st.sidebar.selectbox("📂 Select Collection", all_collections)
+collection = db[selected_collection_name]
+
+tabs = st.tabs(["💬 Chat", "📄 View Records", "🛠️ Rebuild Index"])
+
+# ------------------- MongoDB Data Sanitizer -------------------
+def sanitize_mongo_data(data):
+    def sanitize_value(val):
+        if isinstance(val, ObjectId):
+            return str(val)
+        elif isinstance(val, dict):
+            return {k: sanitize_value(v) for k, v in val.items()}
+        elif isinstance(val, list):
+            return [sanitize_value(v) for v in val]
+        else:
+            return val
+
+    return [{k: sanitize_value(v) for k, v in doc.items()} for doc in data]
+
+# ------------------- Load MongoDB Documents -------------------
 def load_documents():
     raw_docs = collection.find()
     documents = []
 
     for doc in raw_docs:
         try:
-            doc.pop("_id", None)  # Remove MongoDB internal ID
-            doc_str = "\n".join([
-                f"{key}: {json.dumps(value, indent=2) if isinstance(value, (dict, list)) else value}"
-                for key, value in doc.items()
-            ])
+            doc.pop("_id", None)
+            doc = sanitize_mongo_data([doc])[0]  # Sanitize each doc
+            doc_str = "\n".join([f"{k}: {v}" for k, v in doc.items()])
             documents.append(doc_str)
         except Exception as e:
             st.warning(f"❌ Skipping document due to error: {e}")
     return documents
 
-# ------------------- Build or Load FAISS -------------------
-def build_vectorstore(docs):
-    index_path = "faiss_index"
+# ------------------- FAISS Index Functions -------------------
+def build_vectorstore(docs, collection_name):
+    index_path = f"faiss_index/{collection_name}"
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     docs = [Document(page_content=doc) for doc in docs]
     splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
@@ -55,7 +72,7 @@ def build_vectorstore(docs):
     return vectorstore
 
 def get_vectorstore(force_rebuild=False):
-    index_path = "faiss_index"
+    index_path = f"faiss_index/{selected_collection_name}"
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
     if force_rebuild and os.path.exists(index_path):
@@ -71,9 +88,9 @@ def get_vectorstore(force_rebuild=False):
     if not docs:
         st.error("❌ No documents found to index.")
         return None
-    return build_vectorstore(docs)
+    return build_vectorstore(docs, selected_collection_name)
 
-# ------------------- Build LLM Chain -------------------
+# ------------------- LLM Chain -------------------
 def get_llm_chain():
     llm = ChatGroq(model_name="llama3-8b-8192", temperature=0)
     prompt_template = PromptTemplate(
@@ -92,20 +109,21 @@ Question: {question}
 
 # ------------------- 💬 Chat Tab -------------------
 with tabs[0]:
-    st.header("💬 Chat with HRMS ")
+    st.header(f"💬 Chat with HRMS.{selected_collection_name} (FAISS Search)")
 
-    if "vectorstore" not in st.session_state:
+    if "vectorstore" not in st.session_state or st.session_state.get("collection_name") != selected_collection_name:
         with st.spinner("🔍 Loading vector store..."):
             st.session_state.vectorstore = get_vectorstore()
+            st.session_state.collection_name = selected_collection_name
 
     if "chat_chain" not in st.session_state:
         st.session_state.chat_chain = get_llm_chain()
 
-    query = st.chat_input("Ask something about employees...")
+    query = st.chat_input("Ask something about the selected collection...")
 
     if query:
         with st.spinner("🤖 Thinking..."):
-            docs = st.session_state.vectorstore.similarity_search(query, k=15)
+            docs = st.session_state.vectorstore.similarity_search(query, k=4)
             context = "\n\n".join([doc.page_content for doc in docs])
             response = st.session_state.chat_chain.run({
                 "context": context,
@@ -117,30 +135,30 @@ with tabs[0]:
             with st.expander("📄 Retrieved context"):
                 st.write(context)
 
-# ------------------- 📄 View All Users Tab -------------------
+# ------------------- 📄 View Records Tab -------------------
 with tabs[1]:
-    st.header("📄 All Users in HRMS.users")
+    st.header(f"📄 All Records in HRMS.{selected_collection_name}")
     data = list(collection.find())
     if data:
-        df = pd.DataFrame(data)
-        df.drop(columns=["_id"], inplace=True, errors="ignore")
+        df = pd.DataFrame(sanitize_mongo_data(data))
         st.dataframe(df, use_container_width=True)
         st.info(f"✅ Total Records: {len(df)}")
 
-        usernames = df["name"].dropna().unique().tolist()
-        selected_name = st.selectbox("👤 View profile for:", ["-- Select User --"] + usernames)
-
-        if selected_name != "-- Select User --":
-            selected_user = df[df["name"] == selected_name].iloc[0]
-            st.subheader(f"🧑‍💼 Profile of {selected_name}")
-            for col in selected_user.index:
-                st.markdown(f"**{col}:** {selected_user[col]}")
+        if "name" in df.columns:
+            usernames = df["name"].dropna().unique().tolist()
+            selected_name = st.selectbox("👤 View profile for:", ["-- Select --"] + usernames)
+            if selected_name != "-- Select --":
+                selected_user = df[df["name"] == selected_name].iloc[0]
+                st.subheader(f"🧑‍💼 Profile of {selected_name}")
+                for col in selected_user.index:
+                    st.markdown(f"**{col}:** {selected_user[col]}")
     else:
         st.warning("⚠️ No data found in collection.")
 
-# ------------------- 🛠️ Rebuild Vector DB Tab -------------------
+# ------------------- 🛠️ Rebuild Vector Index Tab -------------------
 with tabs[2]:
-    st.header("🛠️ Rebuild FAISS Vector Index")
+    st.header(f"🛠️ Rebuild FAISS Index for HRMS.{selected_collection_name}")
     if st.button("🔄 Clear & Rebuild Index"):
         st.session_state.vectorstore = get_vectorstore(force_rebuild=True)
-        st.success("✅ Rebuilt vector DB using all documents.")
+        st.session_state.collection_name = selected_collection_name
+        st.success(f"✅ Vector DB rebuilt for {selected_collection_name}.")
