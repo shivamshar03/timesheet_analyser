@@ -109,7 +109,7 @@ Question: {question}
 
 # ------------------- 💬 Chat Tab -------------------
 with tabs[0]:
-    st.header(f"💬 Chat with HRMS.{selected_collection_name} (FAISS Search)")
+    st.header(f"💬 Chat with HRMS.{selected_collection_name}")
 
     if "vectorstore" not in st.session_state or st.session_state.get("collection_name") != selected_collection_name:
         with st.spinner("🔍 Loading vector store..."):
